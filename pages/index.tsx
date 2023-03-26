@@ -7,43 +7,12 @@ import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import SmartToyOutlinedIcon from '@mui/icons-material/SmartToyOutlined';
 import SmartToyTwoToneIcon from '@mui/icons-material/SmartToyTwoTone';
 
-import { ChatGptModelData, isValidOpenAIApiKey, loadOpenAIApiKey, Settings } from '../components/Settings';
-import { ChatMessage, UiMessage } from '../components/ChatMessage';
+import { ChatApiInput } from './api/chat';
 import { Composer } from '../components/Composer';
-import { NoSSR } from '../components/NoSSR';
-import { useSettingsStore } from '../utilities/store';
-
-
-/// Purpose configuration
-
-export type SystemPurpose = 'Catalyst' | 'Custom' | 'Developer' | 'Executive' | 'Generic' | 'Scientist';
-
-const PurposeData: { [key in SystemPurpose]: { systemMessage: string; description: string | JSX.Element } } = {
-  Catalyst: {
-    systemMessage: 'You are a marketing extraordinaire for a booming startup fusing creativity, data-smarts, and digital prowess to skyrocket growth & wow audiences. So fun. Much meme. 🚀🎯💡',
-    description: 'The growth hacker with marketing superpowers 🚀',
-  },
-  Custom: {
-    systemMessage: 'You are ChatGPT, a large language model trained by OpenAI, based on the GPT-4 architecture.\nKnowledge cutoff: 2021-09\nCurrent date: {{Today}}',
-    description: 'User-defined purpose',
-  },
-  Developer: {
-    systemMessage: 'You are a sophisticated, accurate, and modern AI programming assistant',
-    description: <>Helps you code</>,
-  },
-  Executive: {
-    systemMessage: 'You are an executive assistant. Your communication style is concise, brief, formal',
-    description: 'Helps you write business emails',
-  },
-  Generic: {
-    systemMessage: 'You are ChatGPT, a large language model trained by OpenAI, based on the GPT-4 architecture.\nKnowledge cutoff: 2021-09\nCurrent date: {{Today}}',
-    description: 'Helps you think',
-  },
-  Scientist: {
-    systemMessage: 'You are a scientist\'s assistant. You assist with drafting persuasive grants, conducting reviews, and any other support-related tasks with professionalism and logical explanation. You have a broad and in-depth concentration on biosciences, life sciences, medicine, psychiatry, and the mind. Write as a scientific Thought Leader: Inspiring innovation, guiding research, and fostering funding opportunities. Focus on evidence-based information, emphasize data analysis, and promote curiosity and open-mindedness',
-    description: 'Helps you write scientific papers',
-  },
-};
+import { GptChatModels, SystemPurposeId, SystemPurposes, useSettingsStore } from '../utilities/store';
+import { Message, UiMessage } from '../components/Message';
+import { NoSSR } from '../components/util/NoSSR';
+import { isValidOpenAIApiKey, Settings } from '../components/Settings';
 
 
 /// UI Messages configuration
@@ -80,10 +49,10 @@ export default function Conversation() {
   const theme = useTheme();
   const { mode: colorMode, setMode: setColorMode } = useColorScheme();
 
-  const { chatModel, systemPurpose, setSystemPurpose } = useSettingsStore(state => ({
-    chatModel: state.chatModel,
-    systemPurpose: state.systemPurpose,
-    setSystemPurpose: state.setSystemPurpose,
+  const { apiKey, chatModelId, systemPurposeId, setSystemPurpose } = useSettingsStore(state => ({
+    apiKey: state.apiKey,
+    chatModelId: state.chatModelId,
+    systemPurposeId: state.systemPurposeId, setSystemPurpose: state.setSystemPurposeId,
   }));
   const [messages, setMessages] = React.useState<UiMessage[]>([]);
   const [disableCompose, setDisableCompose] = React.useState(false);
@@ -96,9 +65,9 @@ export default function Conversation() {
 
   React.useEffect(() => {
     // show the settings at startup if the API key is not present
-    if (!!process.env.REQUIRE_USER_API_KEYS && !isValidOpenAIApiKey(loadOpenAIApiKey()))
+    if (!!process.env.REQUIRE_USER_API_KEYS && !isValidOpenAIApiKey(apiKey))
       setSettingsShown(true);
-  }, []);
+  }, [apiKey]);
 
   const handleDarkModeToggle = () => setColorMode(colorMode === 'dark' ? 'light' : 'dark');
 
@@ -124,12 +93,12 @@ export default function Conversation() {
       .then(() => setDisableCompose(false));
   };
 
-  const handlePurposeChange = (purpose: SystemPurpose | null) => {
+  const handlePurposeChange = (purpose: SystemPurposeId | null) => {
     if (!purpose) return;
 
     if (purpose === 'Custom') {
-      const systemMessage = prompt('Enter your custom AI purpose', PurposeData['Custom'].systemMessage);
-      PurposeData['Custom'].systemMessage = systemMessage || '';
+      const systemMessage = prompt('Enter your custom AI purpose', SystemPurposes['Custom'].systemMessage);
+      SystemPurposes['Custom'].systemMessage = systemMessage || '';
     }
 
     setSystemPurpose(purpose);
@@ -137,10 +106,19 @@ export default function Conversation() {
 
 
   const getBotMessageStreaming = async (messages: UiMessage[]) => {
+    const payload: ChatApiInput = {
+      apiKey: apiKey,
+      model: chatModelId,
+      messages: messages.map(({ role, text }) => ({
+        role: role,
+        content: text,
+      })),
+    };
+
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ apiKey: loadOpenAIApiKey(), model: chatModel, messages: messages }),
+      body: JSON.stringify(payload),
     });
 
     if (response.body) {
@@ -186,8 +164,8 @@ export default function Conversation() {
     // seed the conversation with a 'system' message
     const conversation = [...messages];
     if (!conversation.length) {
-      let systemMessage = PurposeData[systemPurpose].systemMessage;
-      systemMessage = systemMessage.replaceAll('{{Today}}', new Date().toISOString().split('T')[0]);
+      const systemMessage = SystemPurposes[systemPurposeId].systemMessage
+        .replaceAll('{{Today}}', new Date().toISOString().split('T')[0]);
       conversation.push(createUiMessage('system', systemMessage));
     }
 
@@ -204,9 +182,7 @@ export default function Conversation() {
   };
 
 
-  const listEmpty = !messages.length;
-
-  const Emoji = (props: any) => null;
+  const noMessages = !messages.length;
 
   return (
     <Container maxWidth='xl' disableGutters sx={{
@@ -219,7 +195,9 @@ export default function Conversation() {
         {/* Application Bar */}
         <Sheet variant='solid' invertedColors sx={{
           position: 'sticky', top: 0, zIndex: 20, p: 1,
-          background: theme.vars.palette.primary.solidHoverBg,
+          background: process.env.NODE_ENV === 'development'
+            ? theme.vars.palette.danger.solidHoverBg
+            : theme.vars.palette.primary.solidHoverBg,
           display: 'flex', flexDirection: 'row',
         }}>
           <IconButton variant='plain' color='neutral' onClick={handleDarkModeToggle}>
@@ -239,7 +217,7 @@ export default function Conversation() {
             flexGrow: 1,
           }} onDoubleClick={handleListClear}>
             <NoSSR>
-              {ChatGptModelData[chatModel]?.title || 'Select Model'} · {systemPurpose}
+              {GptChatModels[chatModelId]?.title || 'Select Model'} <span style={{ opacity: 0.5 }}> ·</span> {SystemPurposes[systemPurposeId].title}
             </NoSSR>
           </Typography>
 
@@ -253,23 +231,22 @@ export default function Conversation() {
           flexGrow: 1,
           background: theme.vars.palette.background.level1,
         }}>
-          {listEmpty ? (
+          {noMessages ? (
             <Stack direction='column' sx={{ alignItems: 'center', justifyContent: 'center', minHeight: '50vh' }}>
               <Box>
                 <Typography level='body3' color='neutral'>
                   AI purpose
                 </Typography>
                 <NoSSR>
-                  <Select value={systemPurpose} onChange={(e, v) => handlePurposeChange(v)} sx={{ minWidth: '40vw' }}>
-                    <Option value='Developer'><Emoji>👩‍💻</Emoji> Developer</Option>
-                    <Option value='Scientist'><Emoji>🔬</Emoji> Scientist</Option>
-                    <Option value='Executive'><Emoji>👔</Emoji> Executive</Option>
-                    <Option value='Catalyst'><Emoji>🚀</Emoji> Catalyst</Option>
-                    <Option value='Generic'><Emoji>🧠</Emoji> ChatGPT4</Option>
-                    <Option value='Custom'><Emoji>✨</Emoji> Custom</Option>
+                  <Select value={systemPurposeId} onChange={(e, v) => handlePurposeChange(v)} sx={{ minWidth: '40vw' }}>
+                    {Object.keys(SystemPurposes).map(spId => (
+                      <Option key={spId} value={spId}>
+                        {SystemPurposes[spId as SystemPurposeId]?.title}
+                      </Option>
+                    ))}
                   </Select>
                   <Typography level='body2' sx={{ mt: 2, minWidth: 260 }}>
-                    {PurposeData[systemPurpose].description}
+                    {SystemPurposes[systemPurposeId].description}
                   </Typography>
                 </NoSSR>
               </Box>
@@ -278,10 +255,10 @@ export default function Conversation() {
             <>
               <List sx={{ p: 0 }}>
                 {messages.map(message =>
-                  <ChatMessage key={'msg-' + message.uid} uiMessage={message}
-                               onDelete={() => handleListDelete(message.uid)}
-                               onEdit={newText => handleListEdit(message.uid, newText)}
-                               onRunAgain={() => handleListRunAgain(message.uid)} />)}
+                  <Message key={'msg-' + message.uid} uiMessage={message}
+                           onDelete={() => handleListDelete(message.uid)}
+                           onEdit={newText => handleListEdit(message.uid, newText)}
+                           onRunAgain={() => handleListRunAgain(message.uid)} />)}
                 <div ref={messagesEndRef}></div>
               </List>
             </>
@@ -297,7 +274,7 @@ export default function Conversation() {
           p: { xs: 1, md: 2 },
         }}>
           <NoSSR>
-            <Composer isDeveloper={systemPurpose === 'Developer'} disableSend={disableCompose} sendMessage={handleComposerSendMessage} />
+            <Composer isDeveloper={systemPurposeId === 'Developer'} disableSend={disableCompose} sendMessage={handleComposerSendMessage} />
           </NoSSR>
         </Box>
 

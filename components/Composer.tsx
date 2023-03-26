@@ -10,12 +10,12 @@ import TelegramIcon from '@mui/icons-material/Telegram';
 
 import { useComposerStore } from '../utilities/store';
 import { useSpeechRecognition } from '../utilities/speechRecognition';
-import { NoSSR } from './NoSSR';
+import { NoSSR } from './util/NoSSR';
 
 
 /// Text template helpers
 
-const PromptTemplates = {
+const PromptTemplates: { [key: string]: string } = {
   PasteText: '{{input}}\n\n{{clipboard}}\n',
   PasteCode: '{{input}}\n\n```\n{{clipboard}}\n```\n',
   PasteFile: '{{input}}\n\n```{{fileName}}\n{{fileText}}\n```\n',

@@ -1,8 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { createParser, ParsedEvent, ReconnectInterval } from 'eventsource-parser';
 
-import { UiMessage } from '../../components/ChatMessage';
-
 
 if (!process.env.OPENAI_API_KEY)
   console.warn('OPENAI_API_KEY has not been provided in this deployment environment. ' +
@@ -134,7 +132,7 @@ async function OpenAIStream(apiKey: string, payload: Omit<ChatCompletionsRequest
 export interface ChatApiInput {
   apiKey?: string;
   model: string;
-  messages: UiMessage[];
+  messages: ChatMessage[];
   temperature?: number;
   max_tokens?: number;
 }
@@ -152,10 +150,6 @@ export default async function handler(req: NextRequest) {
 
   // read inputs
   const { apiKey: userApiKey, model, messages, temperature = 0.5, max_tokens = 2048 }: ChatApiInput = await req.json();
-  const chatGptInputMessages: ChatMessage[] = messages.map(({ role, text }) => ({
-    role: role,
-    content: text,
-  }));
 
   // select key
   const apiKey = userApiKey || process.env.OPENAI_API_KEY || '';
@@ -164,13 +158,13 @@ export default async function handler(req: NextRequest) {
 
   const stream: ReadableStream = await OpenAIStream(apiKey, {
     model,
-    messages: chatGptInputMessages,
+    messages,
     temperature,
     max_tokens,
   });
 
   return new Response(stream);
-};
+}
 
 //noinspection JSUnusedGlobalSymbols
 export const config = {
