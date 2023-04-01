@@ -1,4 +1,5 @@
-import React from 'react';
+import * as React from 'react';
+import { shallow } from 'zustand/shallow';
 
 import { Box, Button, Card, Grid, IconButton, ListDivider, Menu, MenuItem, Stack, Textarea, Tooltip, Typography } from '@mui/joy';
 import ContentPasteGoIcon from '@mui/icons-material/ContentPasteGo';
@@ -6,11 +7,11 @@ import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import MicIcon from '@mui/icons-material/Mic';
 import PanToolIcon from '@mui/icons-material/PanTool';
 import PostAddIcon from '@mui/icons-material/PostAdd';
+import StopOutlinedIcon from '@mui/icons-material/StopOutlined';
 import TelegramIcon from '@mui/icons-material/Telegram';
 
-import { useComposerStore } from '../utilities/store';
-import { useSpeechRecognition } from '../utilities/speechRecognition';
-import { NoSSR } from './util/NoSSR';
+import { useComposerStore } from '@/lib/store';
+import { useSpeechRecognition } from '@/lib/use-speech-recognition';
 
 
 /// Text template helpers
@@ -36,31 +37,35 @@ const expandPromptTemplate = (template: string, dict: object) => (inputValue: st
  * Note: Useful bash trick to generate code from a list of files:
  *       $ for F in *.ts; do echo; echo "\`\`\`$F"; cat $F; echo; echo "\`\`\`"; done | clip
  *
- * @param {boolean} isDeveloper - Flag to indicate if the user is a developer.
- * @param {boolean} disableSend - Flag to disable the send button.
- * @param {(text: string) => void} sendMessage - Function to send the composed message.
+ * @param {boolean} props.disableSend - Flag to disable the send button.
+ * @param {(text: string, conversationId: string | null) => void} props.sendMessage - Function to send the message. conversationId is null for the Active conversation
+ * @param {() => void} props.stopGeneration - Function to stop response generation
  */
-export function Composer({ isDeveloper, disableSend, sendMessage }: { isDeveloper: boolean; disableSend: boolean; sendMessage: (text: string) => void; }) {
+export function Composer(props: { disableSend: boolean; isDeveloperMode: boolean; sendMessage: (text: string, conversationId: string | null) => void; stopGeneration: () => void }) {
   // state
   const [composeText, setComposeText] = React.useState('');
-  const { history, appendMessageToHistory } = useComposerStore(state => ({ history: state.history, appendMessageToHistory: state.appendMessageToHistory }));
-  const [historyAnchor, setHistoryAnchor] = React.useState<HTMLAnchorElement | null>(null);
   const [isDragging, setIsDragging] = React.useState(false);
+  const [historyAnchor, setHistoryAnchor] = React.useState<HTMLAnchorElement | null>(null);
   const attachmentFileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // external state
+  const { history, appendMessageToHistory } = useComposerStore(state => ({ history: state.history, appendMessageToHistory: state.appendMessageToHistory }), shallow);
 
 
   const handleSendClicked = () => {
     const text = (composeText || '').trim();
     if (text.length) {
       setComposeText('');
-      sendMessage(text);
+      props.sendMessage(text, null);
       appendMessageToHistory(text);
     }
   };
 
+  const handleStopClicked = () => props.stopGeneration();
+
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      if (!disableSend)
+    if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
+      if (!props.disableSend)
         handleSendClicked();
       e.preventDefault();
     }
@@ -131,7 +136,9 @@ export function Composer({ isDeveloper, disableSend, sendMessage }: { isDevelope
   };
 
 
-  const handleAttachmentChanged = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleOpenFilePicker = () => attachmentFileInputRef.current?.click();
+
+  const handleLoadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
     let text = composeText;
@@ -140,13 +147,11 @@ export function Composer({ isDeveloper, disableSend, sendMessage }: { isDevelope
     setComposeText(text);
   };
 
-  const handleOpenAttachmentPicker = () => attachmentFileInputRef.current?.click();
-
 
   const pasteFromClipboard = async () => {
     const clipboardContent = (await navigator.clipboard.readText() || '').trim();
     if (clipboardContent) {
-      const template = isDeveloper ? PromptTemplates.PasteCode : PromptTemplates.PasteText;
+      const template = props.isDeveloperMode ? PromptTemplates.PasteCode : PromptTemplates.PasteText;
       setComposeText(expandPromptTemplate(template, { clipboard: clipboardContent }));
     }
   };
@@ -162,24 +167,26 @@ export function Composer({ isDeveloper, disableSend, sendMessage }: { isDevelope
   const hideHistory = () => setHistoryAnchor(null);
 
 
-  const textPlaceholder: string = 'Type a message...'; // 'Enter your message...\n  <enter> send\n  <shift>+<enter> new line\n  ``` code';*/
+  const textPlaceholder: string = `Type ${props.isDeveloperMode ? 'your message and drop source files' : 'a message, or drop text files'}...`;
   const hideOnMobile = { display: { xs: 'none', md: 'flex' } };
   const hideOnDesktop = { display: { xs: 'flex', md: 'none' } };
 
   return (
     <Grid container spacing={{ xs: 1, md: 2 }}>
 
-      {/* Compose & VButtons */}
+      {/* Compose & V-Buttons */}
       <Grid xs={12} md={9}><Stack direction='row' spacing={{ xs: 1, md: 2 }}>
 
         {/* Vertical Buttons Bar */}
-        <Box>
+        <Stack>
 
-          <IconButton variant='plain' color='neutral' onClick={handleOpenAttachmentPicker} sx={{ ...hideOnDesktop }}>
+          {/*<Typography level='body3' sx={{mb: 2}}>Context</Typography>*/}
+
+          <IconButton variant='plain' color='neutral' onClick={handleOpenFilePicker} sx={{ ...hideOnDesktop }}>
             <PostAddIcon />
           </IconButton>
-          <Tooltip title={<>Attach {isDeveloper ? 'code' : 'text'} files · also drag-and-drop 👇</>} variant='solid' placement='top-start'>
-            <Button fullWidth variant='plain' color='neutral' onClick={handleOpenAttachmentPicker} startDecorator={<PostAddIcon />}
+          <Tooltip title={<>Attach {props.isDeveloperMode ? 'code' : 'text'} files · also drag-and-drop 👇</>} variant='solid' placement='top-start'>
+            <Button fullWidth variant='plain' color='neutral' onClick={handleOpenFilePicker} startDecorator={<PostAddIcon />}
                     sx={{ ...hideOnMobile, justifyContent: 'flex-start' }}>
               Attach
             </Button>
@@ -191,38 +198,40 @@ export function Composer({ isDeveloper, disableSend, sendMessage }: { isDevelope
             <ContentPasteGoIcon />
           </IconButton>
           <Button fullWidth variant='plain' color='neutral' startDecorator={<ContentPasteGoIcon />} onClick={pasteFromClipboard} sx={{ ...hideOnMobile }}>
-            {isDeveloper ? 'Paste code' : 'Paste'}
+            {props.isDeveloperMode ? 'Paste code' : 'Paste'}
           </Button>
 
-          <input type='file' multiple hidden ref={attachmentFileInputRef} onChange={handleAttachmentChanged} />
+          <input type='file' multiple hidden ref={attachmentFileInputRef} onChange={handleLoadFile} />
 
-        </Box>
+        </Stack>
 
-        {/* Message edit box, with Drop overlay */}
+        {/* Edit box, with Drop overlay */}
         <Box sx={{ flexGrow: 1, position: 'relative' }}>
 
-          <Textarea variant='soft' autoFocus placeholder={textPlaceholder}
-                    minRows={5} maxRows={12}
-                    onKeyDown={handleKeyPress}
-                    onDragEnter={handleMessageDragEnter}
-                    value={composeText} onChange={(e) => setComposeText(e.target.value)}
-                    sx={{
-                      fontSize: '16px',
-                      lineHeight: 1.75,
-                      pr: isSpeechEnabled ? { xs: 4, md: 5 } : 0, // accounts for the microphone icon when supported
-                    }} />
+          <Textarea
+            variant='soft' autoFocus placeholder={textPlaceholder}
+            minRows={5} maxRows={12}
+            onKeyDown={handleKeyPress}
+            onDragEnter={handleMessageDragEnter}
+            value={composeText} onChange={(e) => setComposeText(e.target.value)}
+            sx={{
+              fontSize: '16px',
+              lineHeight: 1.75,
+              pr: isSpeechEnabled ? { xs: 4, md: 5 } : 0, // accounts for the microphone icon when supported
+            }} />
 
-          <Card color='primary' invertedColors variant='soft'
-                sx={{
-                  display: isDragging ? 'flex' : 'none',
-                  position: 'absolute', bottom: 0, left: 0, right: 0, top: 0,
-                  alignItems: 'center', justifyContent: 'space-evenly',
-                  border: '2px dashed',
-                  zIndex: 10,
-                }}
-                onDragLeave={handleOverlayDragLeave}
-                onDragOver={handleOverlayDragOver}
-                onDrop={handleOverlayDrop}>
+          <Card
+            color='primary' invertedColors variant='soft'
+            sx={{
+              display: isDragging ? 'flex' : 'none',
+              position: 'absolute', bottom: 0, left: 0, right: 0, top: 0,
+              alignItems: 'center', justifyContent: 'space-evenly',
+              border: '2px dashed',
+              zIndex: 10,
+            }}
+            onDragLeave={handleOverlayDragLeave}
+            onDragOver={handleOverlayDragOver}
+            onDrop={handleOverlayDrop}>
             <PanToolIcon sx={{ width: 40, height: 40, pointerEvents: 'none' }} />
             <Typography level='body2' sx={{ pointerEvents: 'none' }}>
               I will hold on to this for you
@@ -246,31 +255,34 @@ export function Composer({ isDeveloper, disableSend, sendMessage }: { isDevelope
 
       </Stack></Grid>
 
-      {/* Other Buttons */}
+      {/* Send pane */}
       <Grid xs={12} md={3}>
         <Stack spacing={2}>
 
           <Box sx={{ display: 'flex', flexDirection: 'row' }}>
-            <NoSSR>
-              {history.length > 0 && (
-                <IconButton variant='plain' color='neutral' onClick={showHistory} sx={{ ...hideOnDesktop, mr: { xs: 1, md: 2 } }}>
-                  <KeyboardArrowUpIcon />
-                </IconButton>
-              )}
-            </NoSSR>
-            <Button fullWidth variant='solid' color='primary' disabled={disableSend} onClick={handleSendClicked} endDecorator={<TelegramIcon />}>
-              Chat
+
+            {/* [mobile-only] History arrow */}
+            {history.length > 0 && (
+              <IconButton variant='plain' color='neutral' onClick={showHistory} sx={{ ...hideOnDesktop, mr: { xs: 1, md: 2 } }}>
+                <KeyboardArrowUpIcon />
+              </IconButton>
+            )}
+
+            {/* Send / Stop */}
+            <Button fullWidth variant={props.disableSend ? 'soft' : 'solid'} color='primary'
+                    onClick={props.disableSend ? handleStopClicked : handleSendClicked}
+                    endDecorator={props.disableSend ? <StopOutlinedIcon /> : <TelegramIcon />}>
+              {props.disableSend ? 'Stop' : 'Chat'}
             </Button>
           </Box>
 
+          {/* [desktop-only] row with History button */}
           <Stack direction='row' spacing={1} sx={{ ...hideOnMobile, flexDirection: { xs: 'column', md: 'row' }, justifyContent: 'flex-end' }}>
-            <NoSSR>
-              {history.length > 0 && (
-                <Button variant='plain' color='neutral' startDecorator={<KeyboardArrowUpIcon />} onClick={showHistory}>
-                  History
-                </Button>
-              )}
-            </NoSSR>
+            {history.length > 0 && (
+              <Button fullWidth variant='plain' color='neutral' startDecorator={<KeyboardArrowUpIcon />} onClick={showHistory}>
+                History
+              </Button>
+            )}
           </Stack>
 
         </Stack>
@@ -278,7 +290,9 @@ export function Composer({ isDeveloper, disableSend, sendMessage }: { isDevelope
 
       {/* History menu with all the line items (only if shown) */}
       {!!historyAnchor && (
-        <Menu size='md' anchorEl={historyAnchor} open onClose={hideHistory} sx={{ minWidth: 320 }}>
+        <Menu
+          variant='plain' color='neutral' size='md' placement='top-end' sx={{ minWidth: 320 }}
+          open anchorEl={historyAnchor} onClose={hideHistory}>
           <MenuItem color='neutral' selected>Reuse messages 💬</MenuItem>
           <ListDivider />
           {history.map((item, index) => (
