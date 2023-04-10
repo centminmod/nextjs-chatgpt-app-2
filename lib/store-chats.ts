@@ -1,22 +1,28 @@
 import { create } from 'zustand';
 import { devtools, persist } from 'zustand/middleware';
 import { shallow } from 'zustand/shallow';
+import { v4 as uuidv4 } from 'uuid';
 
-import { ChatModelId, defaultChatModelId, SystemPurposeId } from '@/lib/data';
+import { ChatModelId, defaultChatModelId, defaultSystemPurposeId, SystemPurposeId } from '@/lib/data';
+import { updateTokenCount } from '@/lib/tokens';
 
 
 /// Conversations Store
+
+export const MAX_CONVERSATIONS = 10;
 
 export interface ChatStore {
   conversations: DConversation[];
   activeConversationId: string | null;
 
   // store setters
-  addConversation: (conversation: DConversation) => void;
+  addConversation: (conversation: DConversation, activate: boolean) => void;
   deleteConversation: (conversationId: string) => void;
   setActiveConversationId: (conversationId: string) => void;
 
   // within a conversation
+  startTyping: (conversationId: string, abortController: AbortController | null) => void;
+  stopTyping: (conversationId: string) => void;
   setMessages: (conversationId: string, messages: DMessage[]) => void;
   appendMessage: (conversationId: string, message: DMessage) => void;
   deleteMessage: (conversationId: string, messageId: string) => void;
@@ -27,6 +33,35 @@ export interface ChatStore {
   // utility function
   _editConversation: (conversationId: string, update: Partial<DConversation> | ((conversation: DConversation) => Partial<DConversation>)) => void;
 }
+
+
+/**
+ * Conversation, a list of messages between humans and bots
+ * Future:
+ * - draftUserMessage?: { text: string; attachments: any[] };
+ * - isMuted: boolean; isArchived: boolean; isStarred: boolean; participants: string[];
+ */
+export interface DConversation {
+  id: string;
+  name: string;
+  messages: DMessage[];
+  systemPurposeId: SystemPurposeId;
+  chatModelId: ChatModelId;
+  userTitle?: string;
+  autoTitle?: string;
+  tokenCount: number;                 // f(messages, chatModelId)
+  created: number;                    // created timestamp
+  updated: number | null;             // updated timestamp
+  // Not persisted, used while in-memory, or temporarily by the UI
+  abortController: AbortController | null;
+}
+
+const createConversation = (id: string, name: string, systemPurposeId: SystemPurposeId, chatModelId: ChatModelId): DConversation =>
+  ({ id, name, messages: [], systemPurposeId, chatModelId, tokenCount: 0, created: Date.now(), updated: Date.now(), abortController: null });
+
+export const createDefaultConversation = () =>
+  createConversation(uuidv4(), 'Conversation', defaultSystemPurposeId, defaultChatModelId);
+
 
 /**
  * Message, sent or received, by humans or bots
@@ -45,66 +80,74 @@ export interface DMessage {
   typing: boolean;
   role: 'assistant' | 'system' | 'user';
 
-  modelId?: string;                 // only assistant - goes beyond known models
   purposeId?: SystemPurposeId;      // only assistant/system
-  cacheTokensCount?: number;
+  originLLM?: string;               // only assistant - model that generated this message, goes beyond known models
+
+  tokenCount: number;               // cache for token count, using the current Conversation model (0 = not yet calculated)
 
   created: number;                  // created timestamp
   updated: number | null;           // updated timestamp
 }
 
-/**
- * Conversation, a list of messages between humans and bots
- * Future:
- * - sumTokensCount?: number;
- * - draftUserMessage?: { text: string; attachments: any[] };
- * - isMuted: boolean; isArchived: boolean; isStarred: boolean; participants: string[];
- */
-export interface DConversation {
-  id: string;
-  name: string;
-  messages: DMessage[];
-  systemPurposeId: SystemPurposeId;
-  chatModelId: ChatModelId;
-  userTitle?: string;
-  autoTitle?: string;
-  cacheTokensCount?: number;
-  created: number;            // created timestamp
-  updated: number | null;     // updated timestamp
-}
+export const createDMessage = (role: DMessage['role'], text: string): DMessage =>
+  ({
+    id: uuidv4(),
+    text,
+    sender: role === 'user' ? 'You' : 'Bot',
+    avatar: null,
+    typing: false,
+    role: role,
+    tokenCount: 0,
+    created: Date.now(),
+    updated: null,
+  });
 
-const createConversation = (id: string, name: string, systemPurposeId: SystemPurposeId, chatModelId: ChatModelId): DConversation =>
-  ({ id, name, messages: [], systemPurposeId, chatModelId, created: Date.now(), updated: Date.now() });
 
-const defaultConversations: DConversation[] = [createConversation('default', 'Conversation', 'Generic', defaultChatModelId)];
-
-const errorConversation: DConversation = createConversation('error-missing', 'Missing Conversation', 'Developer', defaultChatModelId);
-
+const defaultConversations: DConversation[] = [createDefaultConversation()];
 
 export const useChatStore = create<ChatStore>()(devtools(
   persist(
     (set, get) => ({
+
       // default state
       conversations: defaultConversations,
       activeConversationId: defaultConversations[0].id,
 
 
-      addConversation: (conversation: DConversation) =>
+      addConversation: (conversation: DConversation, activate: boolean) =>
         set(state => (
           {
             conversations: [
               conversation,
-              ...state.conversations.slice(0, 19),
+              ...state.conversations.slice(0, MAX_CONVERSATIONS - 1),
             ],
+            ...(activate ? { activeConversationId: conversation.id } : {}),
           }
         )),
 
       deleteConversation: (conversationId: string) =>
-        set(state => (
-          {
-            conversations: state.conversations.filter((conversation: DConversation): boolean => conversation.id !== conversationId),
-          }
-        )),
+        set(state => {
+
+          // abort any pending requests on this conversation
+          const cIndex = state.conversations.findIndex((conversation: DConversation): boolean => conversation.id === conversationId);
+          if (cIndex >= 0 && state.conversations[cIndex].id !== 'error-missing')
+            state.conversations[cIndex].abortController?.abort();
+
+          // remove from the list
+          const conversations = state.conversations.filter((conversation: DConversation): boolean => conversation.id !== conversationId);
+
+          // update the active conversation to the next in list
+          let activeConversationId = undefined;
+          if (state.activeConversationId === conversationId && cIndex >= 0)
+            activeConversationId = conversations.length
+              ? conversations[cIndex < conversations.length ? cIndex : conversations.length - 1].id
+              : null;
+
+          return {
+            conversations,
+            ...(activeConversationId !== undefined ? { activeConversationId } : {}),
+          };
+        }),
 
       setActiveConversationId: (conversationId: string) =>
         set({ activeConversationId: conversationId }),
@@ -112,24 +155,42 @@ export const useChatStore = create<ChatStore>()(devtools(
 
       // within a conversation
 
+      startTyping: (conversationId: string, abortController: AbortController | null) =>
+        get()._editConversation(conversationId, () =>
+          ({
+            abortController: abortController,
+          })),
+
+      stopTyping: (conversationId: string) =>
+        get()._editConversation(conversationId, conversation => {
+          conversation.abortController?.abort();
+          return {
+            abortController: null,
+          };
+        }),
+
       setMessages: (conversationId: string, newMessages: DMessage[]) =>
-        get()._editConversation(conversationId,
-          {
+        get()._editConversation(conversationId, conversation => {
+          conversation.abortController?.abort();
+          return {
             messages: newMessages,
-            // cacheTokensCount: newMessages.reduce((sum, message) => sum + (message.cacheTokensCount || 0), 0),
+            tokenCount: newMessages.reduce((sum, message) => sum + updateTokenCount(message, conversation.chatModelId, false, 'setMessages'), 0),
             updated: Date.now(),
-          },
-        ),
+            abortController: null,
+          };
+        }),
 
       appendMessage: (conversationId: string, message: DMessage) =>
         get()._editConversation(conversationId, conversation => {
+
+          if (!message.typing)
+            updateTokenCount(message, conversation.chatModelId, true, 'appendMessage');
 
           const messages = [...conversation.messages, message];
 
           return {
             messages,
-            // DISABLE THE FOLLOWING FOR NOW - as we haven't decided how to handle token counts
-            // cacheTokensCount: (conversation.cacheTokensCount || 0) + (message.cacheTokensCount || 0),
+            tokenCount: messages.reduce((sum, message) => sum + message.tokenCount || 0, 0),
             updated: Date.now(),
           };
         }),
@@ -141,12 +202,12 @@ export const useChatStore = create<ChatStore>()(devtools(
 
           return {
             messages,
-            // cacheTokensCount: messages.reduce((sum, message) => sum + (message.cacheTokensCount || 0), 0),
+            tokenCount: messages.reduce((sum, message) => sum + message.tokenCount || 0, 0),
             updated: Date.now(),
           };
         }),
 
-      editMessage: (conversationId: string, messageId: string, updatedMessage: Partial<DMessage>, touch: boolean) =>
+      editMessage: (conversationId: string, messageId: string, updatedMessage: Partial<DMessage>, setUpdated: boolean) =>
         get()._editConversation(conversationId, conversation => {
 
           const messages = conversation.messages.map((message: DMessage): DMessage =>
@@ -154,22 +215,25 @@ export const useChatStore = create<ChatStore>()(devtools(
               ? {
                 ...message,
                 ...updatedMessage,
-                ...(touch ? { updated: Date.now() } : {}),
+                ...(setUpdated && { updated: Date.now() }),
+                ...(((updatedMessage.typing === false || !message.typing) && { tokenCount: updateTokenCount(message, conversation.chatModelId, true, 'editMessage(typing=false)') })),
               }
               : message);
 
           return {
             messages,
-            // cacheTokensCount: messages.reduce((sum, message) => sum + (message.cacheTokensCount || 0), 0),
-            ...(touch ? { updated: Date.now() } : {}),
+            tokenCount: messages.reduce((sum, message) => sum + message.tokenCount || 0, 0),
+            ...(setUpdated && { updated: Date.now() }),
           };
         }),
 
       setChatModelId: (conversationId: string, chatModelId: ChatModelId) =>
-        get()._editConversation(conversationId,
-          {
+        get()._editConversation(conversationId, conversation => {
+          return {
             chatModelId,
-          }),
+            tokenCount: conversation.messages.reduce((sum, message) => sum + updateTokenCount(message, chatModelId, true, 'setChatModelId'), 0),
+          };
+        }),
 
       setSystemPurposeId: (conversationId: string, systemPurposeId: SystemPurposeId) =>
         get()._editConversation(conversationId,
@@ -192,6 +256,31 @@ export const useChatStore = create<ChatStore>()(devtools(
     }),
     {
       name: 'app-chats',
+      // version history:
+      //  - 1: [2023-03-18] app launch, single chat
+      //  - 2: [2023-04-10] multi-chat version - invalidating data to be sure
+      version: 2,
+
+      // omit the transient property from the persisted state
+      partialize: (state) => ({
+        ...state,
+        conversations: state.conversations.map((conversation: DConversation) => {
+          const { abortController, ...rest } = conversation;
+          return rest;
+        }),
+      }),
+
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          // if nothing is selected, select the first conversation
+          if (!state.activeConversationId && state.conversations.length)
+            state.activeConversationId = state.conversations[0].id;
+
+          // rehydrate the transient property
+          for (const conversation of (state.conversations || []))
+            conversation.abortController = null;
+        }
+      },
     }),
   {
     name: 'AppChats',
@@ -200,37 +289,33 @@ export const useChatStore = create<ChatStore>()(devtools(
 );
 
 
-// WARNING: this will re-render at high frequency (e.g. token received in any message therein)
-//          only use this for UI that renders messages
-export function useActiveConversation(): DConversation {
-  const activeConversationId = useChatStore(state => state.activeConversationId);
-  return useChatStore(state => state.conversations.find(conversation => conversation.id === activeConversationId) || errorConversation);
-}
-
-export function useActiveConfiguration() {
-  const { conversationId, chatModelId, setChatModelId, systemPurposeId, setSystemPurposeId } = useChatStore(state => {
-    const _activeConversationId = state.activeConversationId;
-    const conversation = state.conversations.find(conversation => conversation.id === _activeConversationId) || errorConversation;
-    return {
-      conversationId: conversation.id,
-      chatModelId: conversation.chatModelId,
-      setChatModelId: state.setChatModelId,
-      systemPurposeId: conversation.systemPurposeId,
-      setSystemPurposeId: state.setSystemPurposeId,
-    };
-  }, shallow);
-
-  return {
-    conversationId,
-    chatModelId,
-    setChatModelId: (chatModelId: ChatModelId) => setChatModelId(conversationId, chatModelId),
-    systemPurposeId,
-    setSystemPurposeId: (systemPurposeId: SystemPurposeId) => setSystemPurposeId(conversationId, systemPurposeId),
-  };
-}
-
-export const useConversationNames = (): { id: string, name: string, systemPurposeId: SystemPurposeId }[] =>
+export const useConversationIDs = (): string[] =>
   useChatStore(
-    state => state.conversations.map((conversation) => ({ id: conversation.id, name: conversation.name, systemPurposeId: conversation.systemPurposeId })),
+    state => state.conversations.map(conversation => conversation.id),
     shallow,
   );
+
+
+/**
+ * Download a conversation as a JSON file, for backup and future restore
+ * Not the best place to have this function, but we want it close to the (re)store function
+ */
+export const downloadConversationJson = (conversation: DConversation) => {
+  if (typeof window === 'undefined') return;
+
+  // payload to be downloaded
+  const json = JSON.stringify(conversation, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const filename = `conversation-${conversation.id}.json`;
+
+  // link to begin the download
+  const tempUrl = URL.createObjectURL(blob);
+  const tempLink = document.createElement('a');
+  tempLink.href = tempUrl;
+  tempLink.download = filename;
+  tempLink.style.display = 'none';
+  document.body.appendChild(tempLink);
+  tempLink.click();
+  document.body.removeChild(tempLink);
+  URL.revokeObjectURL(tempUrl);
+};

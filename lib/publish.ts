@@ -1,6 +1,6 @@
 // noinspection ExceptionCaughtLocallyJS
 
-import { ApiExportBody, ApiExportResponse } from '../pages/api/export';
+import { ApiPublishBody, ApiPublishResponse } from '../pages/api/publish';
 import { DConversation } from '@/lib/store-chats';
 import { SystemPurposes } from '@/lib/data';
 
@@ -8,21 +8,24 @@ import { SystemPurposes } from '@/lib/data';
 /**
  * Primitive rendering of a Conversation to Markdown
  */
-function conversationToMarkdown(conversation: DConversation) {
+function conversationToMarkdown(conversation: DConversation, hideSystemMessage: boolean) {
 
   // const title =
   //   `# ${conversation.name || 'Conversation'}\n` +
   //   (new Date(conversation.created)).toLocaleString() + '\n\n';
 
-  return conversation.messages.map(message => {
+  return conversation.messages.filter(message => !hideSystemMessage || message.role !== 'system').map(message => {
     let sender: string = message.sender;
+    let text = message.text;
     switch (message.role) {
       case 'system':
         sender = '✨ System message';
+        text = '<img src="https://i.giphy.com/media/jJxaUysjzO9ri/giphy.webp" width="48" height="48" alt="typing fast meme"/>\n\n' + '*' + text + '*';
         break;
       case 'assistant':
-        sender = `Assistant ${prettyBaseModel(message.modelId)}`.trim();
-        const purpose = conversation.systemPurposeId || null;
+        const purpose = message.purposeId || conversation.systemPurposeId || null;
+        // TODO: remove the "modelId" hack soon, once we let this percolate through the system (modelId was the former name of originLLM)
+        sender = `${purpose || 'Assistant'} · *${prettyBaseModel(message.originLLM || (message as any)['modelId'] || '')}*`.trim();
         if (purpose && purpose in SystemPurposes)
           sender = `${SystemPurposes[purpose]?.symbol || ''} ${sender}`.trim();
         break;
@@ -30,7 +33,7 @@ function conversationToMarkdown(conversation: DConversation) {
         sender = '👤 You';
         break;
     }
-    return `### ${sender}\n\n${message.text}\n\n`;
+    return `### ${sender}\n\n${text}\n\n`;
   }).join('---\n\n');
 
 }
@@ -49,7 +52,7 @@ function getOrigin() {
 }
 
 /**
- * Exports a markdown rendering of the conversation to a service of choice
+ * Publishes a markdown rendering of the conversation to a service of choice
  *
  * **Called by the UI to render the data and post it to the API**
  *
@@ -57,32 +60,33 @@ function getOrigin() {
  *       because the browser wouldn't otherwise allow us to perform a CORS to paste.gg
  *
  * @param gg Only one service for now
- * @param conversation The conversation to export
+ * @param conversation The conversation to render
+ * @param hideSystemMessage True to hide the first message
  */
-export async function exportConversation(gg: 'paste.gg', conversation: DConversation): Promise<ApiExportResponse | null> {
+export async function publishConversation(gg: 'paste.gg', conversation: DConversation, hideSystemMessage: boolean): Promise<ApiPublishResponse | null> {
 
-  const body: ApiExportBody = {
+  const body: ApiPublishBody = {
     to: gg,
     title: '🤖💬 Chat Conversation',
-    fileContent: conversationToMarkdown(conversation),
+    fileContent: conversationToMarkdown(conversation, hideSystemMessage),
     fileName: 'my-chat.md',
     origin: getOrigin(),
   };
 
   try {
 
-    const response = await fetch('/api/export', {
+    const response = await fetch('/api/publish', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
 
     if (response.ok) {
-      const paste: ApiExportResponse = await response.json();
+      const paste: ApiPublishResponse = await response.json();
 
       if (paste.type === 'success') {
         // we log this to the console for extra safety
-        console.log('Data from your export to \'paste.gg\'', paste);
+        console.log('Data from your paste to \'paste.gg\'', paste);
         return paste;
       }
 
@@ -90,11 +94,11 @@ export async function exportConversation(gg: 'paste.gg', conversation: DConversa
         throw new Error(`Failed to send the paste: ${paste.error}`);
     }
 
-    throw new Error(`Failed to export conversation: ${response.status}: ${response.statusText}`);
+    throw new Error(`Failed to publish conversation: ${response.status}: ${response.statusText}`);
 
   } catch (error) {
-    console.error('Export issue', error);
-    alert(`Export issue: ${error}`);
+    console.error('Publish issue', error);
+    alert(`Publish issue: ${error}`);
   }
 
   return null;

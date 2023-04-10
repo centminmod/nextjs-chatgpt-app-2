@@ -1,5 +1,8 @@
 import * as React from 'react';
 
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+
 import Prism from 'prismjs';
 import 'prismjs/themes/prism.css';
 import 'prismjs/components/prism-bash';
@@ -11,7 +14,7 @@ import 'prismjs/components/prism-python';
 import 'prismjs/components/prism-typescript';
 
 import { Alert, Avatar, Box, Button, IconButton, ListDivider, ListItem, ListItemDecorator, Menu, MenuItem, Stack, Textarea, Tooltip, Typography, useTheme } from '@mui/joy';
-import { SxProps, Theme } from '@mui/joy/styles/types';
+import { SxProps } from '@mui/joy/styles/types';
 import ClearIcon from '@mui/icons-material/Clear';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import EditIcon from '@mui/icons-material/Edit';
@@ -22,9 +25,10 @@ import SettingsSuggestIcon from '@mui/icons-material/SettingsSuggest';
 import SmartToyOutlinedIcon from '@mui/icons-material/SmartToyOutlined';
 
 import { DMessage } from '@/lib/store-chats';
-import { Link } from './util/Link';
-import { cssRainbowColorKeyframes, foolsMode } from '@/lib/theme';
-import { prettyBaseModel } from '@/lib/export-conversation';
+import { Link } from '@/components/util/Link';
+import { cssRainbowColorKeyframes } from '@/lib/theme';
+import { prettyBaseModel } from '@/lib/publish';
+import { useSettingsStore } from '@/lib/store-settings';
 
 
 /// Utilities to parse messages into blocks of text and code
@@ -115,30 +119,60 @@ const parseBlocks = (forceText: boolean, text: string): Block[] => {
 
 /// Renderers for the different types of message blocks
 
-function RenderCode({ codeBlock, theme, sx }: { codeBlock: CodeBlock, theme: Theme, sx?: SxProps }) {
-  const handleCopyToClipboard = () =>
+function RenderCode({ codeBlock, sx }: { codeBlock: CodeBlock, sx?: SxProps }) {
+  const handleCopyToClipboard = (e: React.MouseEvent) => {
+    e.stopPropagation();
     copyToClipboard(codeBlock.code);
+  };
 
-  return <Box component='code' sx={{
-    position: 'relative', ...(sx || {}), mx: 0, p: 1.5,
-    display: 'block', fontWeight: 500, background: theme.vars.palette.background.level1,
-    '&:hover > button': { opacity: 1 },
-  }}>
-    <Tooltip title='Copy Code' variant='solid'>
-      <IconButton variant='plain' color='primary' onClick={handleCopyToClipboard} sx={{ position: 'absolute', top: 0, right: 0, zIndex: 10, p: 0.5, opacity: 0, transition: 'opacity 0.3s' }}>
-        <ContentCopyIcon />
-      </IconButton>
-    </Tooltip>
-    <Box dangerouslySetInnerHTML={{ __html: codeBlock.content }} />
-  </Box>;
+  return (
+    <Box
+      component='code'
+      sx={{
+        position: 'relative', mx: 0, p: 1.5, // this block gets a thicker border
+        display: 'block', fontWeight: 500,
+        whiteSpace: 'break-spaces',
+        '&:hover > button': { opacity: 1 },
+        ...(sx || {}),
+      }}>
+      <Tooltip title='Copy Code' variant='solid'>
+        <IconButton
+          variant='outlined' color='neutral' onClick={handleCopyToClipboard}
+          sx={{
+            position: 'absolute', top: 0, right: 0, zIndex: 10, p: 0.5,
+            opacity: 0, transition: 'opacity 0.3s',
+          }}>
+          <ContentCopyIcon />
+        </IconButton>
+      </Tooltip>
+      <Box dangerouslySetInnerHTML={{ __html: codeBlock.content }} />
+    </Box>
+  );
 }
 
-const RenderText = ({ textBlock, onDoubleClick, sx }: { textBlock: TextBlock, onDoubleClick: (e: React.MouseEvent) => void, sx?: SxProps }) =>
+const RenderMarkdown = ({ textBlock }: { textBlock: TextBlock }) => {
+  const theme = useTheme();
+  return <Box
+    className={`markdown-body ${theme.palette.mode === 'dark' ? 'markdown-body-dark' : 'markdown-body-light'}`}
+    sx={{
+      mx: '12px !important',                                // margin: 1.5 like other blocks
+      '& table': { width: 'inherit !important' },           // un-break auto-width (tables have 'max-content', which overflows)
+      '--color-canvas-default': 'transparent !important',   // remove the default background color
+      fontFamily: `inherit !important`,                     // use the default font family
+      lineHeight: '1.75 !important',                        // line-height: 1.75 like the text block
+    }}>
+    <ReactMarkdown remarkPlugins={[remarkGfm]}>{textBlock.content}</ReactMarkdown>
+  </Box>;
+};
+
+const RenderText = ({ textBlock }: { textBlock: TextBlock }) =>
   <Typography
-    level='body1' component='span'
-    onDoubleClick={onDoubleClick}
-    sx={{ ...(sx || {}), mx: 1.5 }}
-  >
+    sx={{
+      lineHeight: 1.75,
+      mx: 1.5,
+      overflowWrap: 'anywhere',
+      whiteSpace: 'break-spaces',
+    }}>
     {textBlock.content}
   </Typography>;
 
@@ -152,7 +186,7 @@ function copyToClipboard(text: string) {
 
 function explainErrorInMessage(text: string, isAssistant: boolean, modelId?: string) {
   let errorMessage: JSX.Element | null = null;
-  const isAssistantError = isAssistant && (text.startsWith('Error: ') || text.startsWith('OpenAI API error: '));
+  const isAssistantError = isAssistant && (text.startsWith('[Issue] ') || text.startsWith('[OpenAI Issue]'));
   if (isAssistantError) {
     if (text.startsWith('OpenAI API error: 429 Too Many Requests')) {
       // TODO: retry at the api/chat level a few times instead of showing this error
@@ -163,17 +197,17 @@ function explainErrorInMessage(text: string, isAssistant: boolean, modelId?: str
     } else if (text.includes('"model_not_found"')) {
       // note that "model_not_found" is different than "The model `gpt-xyz` does not exist" message
       errorMessage = <>
-        Your API key appears to be unauthorized for {modelId || 'this model'}. You can change to <b>GPT-3.5 Turbo</b>
-        and simultaneously <Link noLinkStyle href='https://openai.com/waitlist/gpt-4-api' target='_blank'>request
+        The API key appears to be unauthorized for {modelId || 'this model'}. You can change to <b>GPT-3.5
+        Turbo</b> and simultaneously <Link noLinkStyle href='https://openai.com/waitlist/gpt-4-api' target='_blank'>request
         access</Link> to the desired model.
       </>;
     } else if (text.includes('"context_length_exceeded"')) {
       // TODO: propose to summarize or split the input?
-      const pattern: RegExp = /maximum context length is (\d+) tokens.+resulted in (\d+) tokens/;
+      const pattern: RegExp = /maximum context length is (\d+) tokens.+you requested (\d+) tokens/;
       const match = pattern.exec(text);
-      const usedText = match ? ` (${match[2]} tokens, max ${match[1]})` : '';
+      const usedText = match ? <b>{parseInt(match[2] || '0').toLocaleString()} tokens &gt; {parseInt(match[1] || '0').toLocaleString()}</b> : '';
       errorMessage = <>
-        This thread <b>surpasses the maximum size</b> allowed for {modelId || 'this model'}{usedText}.
+        This thread <b>surpasses the maximum size</b> allowed for {modelId || 'this model'}. {usedText}.
         Please consider removing some earlier messages from the conversation, start a new conversation,
         choose a model with larger context, or submit a shorter new message.
       </>;
@@ -182,6 +216,12 @@ function explainErrorInMessage(text: string, isAssistant: boolean, modelId?: str
         The API key appears to not be correct or to have expired.
         Please <Link noLinkStyle href='https://openai.com/account/api-keys' target='_blank'>check your API key</Link> and
         update it in the <b>Settings</b> menu.
+      </>;
+    } else if (text.includes('"insufficient_quota"')) {
+      errorMessage = <>
+        The API key appears to have <b>insufficient quota</b>. Please
+        check <Link noLinkStyle href='https://platform.openai.com/account/usage' target='_blank'>your usage</Link> and
+        make sure the usage is under <Link noLinkStyle href='https://platform.openai.com/account/billing/limits' target='_blank'>the limits</Link>.
       </>;
     }
   }
@@ -197,16 +237,16 @@ function explainErrorInMessage(text: string, isAssistant: boolean, modelId?: str
  * or collapsing long user messages.
  *
  */
-export function ChatMessage(props: { message: DMessage, disableSend: boolean, onDelete: () => void, onEdit: (text: string) => void, onRunAgain: () => void }) {
-  const theme = useTheme();
+export function ChatMessage(props: { message: DMessage, isLast: boolean, onMessageDelete: () => void, onMessageEdit: (text: string) => void, onMessageRunFrom: () => void }) {
   const {
     text: messageText,
     sender: messageSender,
     avatar: messageAvatar,
     typing: messageTyping,
     role: messageRole,
-    modelId: messageModelId,
     // purposeId: messagePurposeId,
+    originLLM: messageModelId,
+    // tokenCount: messageTokenCount,
     updated: messageUpdated,
   } = props.message;
   const fromAssistant = messageRole === 'assistant';
@@ -214,15 +254,17 @@ export function ChatMessage(props: { message: DMessage, disableSend: boolean, on
   const fromUser = messageRole === 'user';
   const wasEdited = !!messageUpdated;
 
-  // viewing
+  // state
   const [forceExpanded, setForceExpanded] = React.useState(false);
-
-  // editing
   const [isHovering, setIsHovering] = React.useState(false);
   const [menuAnchor, setMenuAnchor] = React.useState<HTMLElement | null>(null);
   const [isEditing, setIsEditing] = React.useState(false);
   const [editedText, setEditedText] = React.useState('');
 
+  // external state
+  const theme = useTheme();
+  const showAvatars = useSettingsStore(state => state.zenMode) !== 'cleaner';
+  const renderMarkdown = useSettingsStore(state => state.renderMarkdown) && !fromSystem;
 
   const closeOperationsMenu = () => setMenuAnchor(null);
 
@@ -241,11 +283,9 @@ export function ChatMessage(props: { message: DMessage, disableSend: boolean, on
   };
 
   const handleMenuRunAgain = (e: React.MouseEvent) => {
-    if (!props.disableSend) {
-      props.onRunAgain();
-      e.preventDefault();
-      closeOperationsMenu();
-    }
+    e.preventDefault();
+    props.onMessageRunFrom();
+    closeOperationsMenu();
   };
 
 
@@ -256,14 +296,14 @@ export function ChatMessage(props: { message: DMessage, disableSend: boolean, on
     if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
       e.preventDefault();
       setIsEditing(false);
-      props.onEdit(editedText);
+      props.onMessageEdit(editedText);
     }
   };
 
   const handleEditBlur = () => {
     setIsEditing(false);
     if (editedText !== messageText && editedText?.trim())
-      props.onEdit(editedText);
+      props.onMessageEdit(editedText);
   };
 
 
@@ -275,34 +315,35 @@ export function ChatMessage(props: { message: DMessage, disableSend: boolean, on
 
 
   // theming
-  let background = theme.vars.palette.background.body;
-  let textBackground: string | undefined = undefined;
+  let background = theme.vars.palette.background.surface;
   switch (messageRole) {
     case 'system':
-      // background = theme.vars.palette.background.body;
-      // textBackground = wasEdited ? theme.vars.palette.warning.plainHoverBg : theme.vars.palette.neutral.plainHoverBg;
-      background = wasEdited ? theme.vars.palette.warning.plainHoverBg : theme.vars.palette.background.popup;
+      if (wasEdited)
+        background = theme.vars.palette.warning.plainHoverBg;
       break;
     case 'user':
-      background = theme.vars.palette.primary.plainHoverBg;
+      background = theme.vars.palette.primary.plainHoverBg; // .background.level1
       break;
     case 'assistant':
-      background = (isAssistantError && !errorMessage) ? theme.vars.palette.danger.softBg : theme.vars.palette.background.body;
+      if (isAssistantError && !errorMessage)
+        background = theme.vars.palette.danger.softBg;
       break;
   }
 
 
   // avatar
-  const avatarEl: JSX.Element = React.useMemo(
+  const avatarEl: JSX.Element | null = React.useMemo(
     () => {
+      if (!showAvatars)
+        return null;
       if (typeof messageAvatar === 'string' && messageAvatar)
         return <Avatar alt={messageSender} src={messageAvatar} />;
       switch (messageRole) {
         case 'system':
           return <SettingsSuggestIcon sx={{ width: 40, height: 40 }} />;  // https://em-content.zobj.net/thumbs/120/apple/325/robot_1f916.png
         case 'assistant':
-          // display a gif avatar when the assistant is typing (fools mode)
-          if (foolsMode && messageTyping)
+          // display a gif avatar when the assistant is typing (people seem to love this, so keeping it after april fools')
+          if (messageTyping)
             return <Avatar
               alt={messageSender} variant='plain'
               src='https://i.giphy.com/media/jJxaUysjzO9ri/giphy.webp'
@@ -317,14 +358,18 @@ export function ChatMessage(props: { message: DMessage, disableSend: boolean, on
           return <Face6Icon sx={{ width: 40, height: 40 }} />;            // https://www.svgrepo.com/show/306500/openai.svg
       }
       return <Avatar alt={messageSender} />;
-    }, [messageAvatar, messageRole, messageSender, messageTyping],
+    }, [messageAvatar, messageRole, messageSender, messageTyping, showAvatars],
   );
 
   // text box css
-  const chatFontCss = {
+  const cssBlocks = {
     my: 'auto',
-    fontFamily: fromAssistant ? theme.fontFamily.code : theme.fontFamily.body,
-    fontSize: fromAssistant ? '14px' : '16px',
+  };
+  const cssCode = {
+    background: theme.vars.palette.background.level1,
+    fontFamily: theme.fontFamily.code,
+    fontSize: '14px',
+    fontVariantLigatures: 'none',
     lineHeight: 1.75,
   };
 
@@ -345,16 +390,17 @@ export function ChatMessage(props: { message: DMessage, disableSend: boolean, on
       display: 'flex', flexDirection: !fromAssistant ? 'row-reverse' : 'row', alignItems: 'flex-start',
       gap: 1, px: { xs: 1, md: 2 }, py: 2,
       background,
-      borderBottom: '1px solid',
-      borderBottomColor: `rgba(${theme.vars.palette.neutral.mainChannel} / 0.2)`,
+      borderBottom: `1px solid ${theme.vars.palette.divider}`,
+      // borderBottomColor: `rgba(${theme.vars.palette.neutral.mainChannel} / 0.2)`,
       position: 'relative',
       '&:hover > button': { opacity: 1 },
     }}>
 
-      {/* Author */}
-      <Stack sx={{ alignItems: 'center', minWidth: { xs: 50, md: 64 }, textAlign: 'center' }}
-             onMouseEnter={() => setIsHovering(true)} onMouseLeave={() => setIsHovering(false)}
-             onClick={event => setMenuAnchor(event.currentTarget)}>
+      {/* Avatar */}
+      {showAvatars && <Stack
+        sx={{ alignItems: 'center', minWidth: { xs: 50, md: 64 }, textAlign: 'center' }}
+        onMouseEnter={() => setIsHovering(true)} onMouseLeave={() => setIsHovering(false)}
+        onClick={event => setMenuAnchor(event.currentTarget)}>
 
         {isHovering ? (
           <IconButton variant='soft' color={fromAssistant ? 'neutral' : 'primary'}>
@@ -375,23 +421,31 @@ export function ChatMessage(props: { message: DMessage, disableSend: boolean, on
           </Tooltip>
         )}
 
-      </Stack>
+      </Stack>}
 
 
       {/* Edit / Blocks */}
       {!isEditing ? (
 
-        <Box sx={{ ...chatFontCss, flexGrow: 0, whiteSpace: 'break-spaces' }}>
+        <Box sx={{ ...cssBlocks, flexGrow: 0 }} onDoubleClick={handleMenuEdit}>
 
-          {fromSystem && wasEdited && <Typography level='body2' color='warning' sx={{ mt: 1, mx: 1.5 }}>modified by user - auto-update disabled</Typography>}
-
-          {parseBlocks(fromSystem, collapsedText).map((block, index) =>
-            block.type === 'code'
-              ? <RenderCode key={'code-' + index} codeBlock={block} theme={theme} sx={{ ...chatFontCss, fontVariantLigatures: 'none' }} />
-              : <RenderText key={'text-' + index} textBlock={block} onDoubleClick={handleMenuEdit} sx={textBackground ? { ...chatFontCss, background: textBackground } : chatFontCss} />,
+          {fromSystem && wasEdited && (
+            <Typography level='body2' color='warning' sx={{ mt: 1, mx: 1.5 }}>modified by user - auto-update disabled</Typography>
           )}
 
-          {errorMessage && <Alert variant='soft' color='warning' sx={{ mt: 1 }}><Typography>{errorMessage}</Typography></Alert>}
+          {!errorMessage && parseBlocks(fromSystem, collapsedText).map((block, index) =>
+            block.type === 'code'
+              ? <RenderCode key={'code-' + index} codeBlock={block} sx={cssCode} />
+              : renderMarkdown
+                ? <RenderMarkdown key={'text-md-' + index} textBlock={block} />
+                : <RenderText key={'text-' + index} textBlock={block} />,
+          )}
+
+          {errorMessage && (
+            <Tooltip title={<Typography sx={{ maxWidth: 800 }}>{collapsedText}</Typography>} variant='soft'>
+              <Alert variant='soft' color='warning' sx={{ mt: 1 }}><Typography>{errorMessage}</Typography></Alert>
+            </Tooltip>
+          )}
 
           {isCollapsed && <Button variant='plain' onClick={handleExpand}>... expand ...</Button>}
 
@@ -399,9 +453,10 @@ export function ChatMessage(props: { message: DMessage, disableSend: boolean, on
 
       ) : (
 
-        <Textarea variant='soft' color='warning' autoFocus minRows={1}
-                  value={editedText} onChange={handleEditTextChanged} onKeyDown={handleEditKeyPressed} onBlur={handleEditBlur}
-                  sx={{ ...chatFontCss, flexGrow: 1 }} />
+        <Textarea
+          variant='soft' color='warning' autoFocus minRows={1}
+          value={editedText} onChange={handleEditTextChanged} onKeyDown={handleEditKeyPressed} onBlur={handleEditBlur}
+          sx={{ ...cssBlocks, flexGrow: 1 }} />
 
       )}
 
@@ -410,7 +465,7 @@ export function ChatMessage(props: { message: DMessage, disableSend: boolean, on
       {!fromSystem && !isEditing && (
         <Tooltip title={fromAssistant ? 'Copy response' : 'Copy input'} variant='solid'>
           <IconButton
-            variant='plain' color='primary' onClick={handleMenuCopy}
+            variant='outlined' color='neutral' onClick={handleMenuCopy}
             sx={{
               position: 'absolute', ...(fromAssistant ? { right: { xs: 12, md: 28 } } : { left: { xs: 12, md: 28 } }), zIndex: 10,
               opacity: 0, transition: 'opacity 0.3s',
@@ -436,11 +491,13 @@ export function ChatMessage(props: { message: DMessage, disableSend: boolean, on
             {!isEditing && <span style={{ opacity: 0.5, marginLeft: '8px' }}> (double-click)</span>}
           </MenuItem>
           <ListDivider />
-          <MenuItem onClick={handleMenuRunAgain} disabled={!fromUser || props.disableSend}>
-            <ListItemDecorator><FastForwardIcon /></ListItemDecorator>
-            Run again
-          </MenuItem>
-          <MenuItem onClick={props.onDelete} disabled={false /*fromSystem*/}>
+          {fromUser && (
+            <MenuItem onClick={handleMenuRunAgain}>
+              <ListItemDecorator><FastForwardIcon /></ListItemDecorator>
+              {props.isLast ? 'Run Again' : 'Restart From Here'}
+            </MenuItem>
+          )}
+          <MenuItem onClick={props.onMessageDelete} disabled={false /*fromSystem*/}>
             <ListItemDecorator><ClearIcon /></ListItemDecorator>
             Delete
           </MenuItem>

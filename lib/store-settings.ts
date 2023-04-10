@@ -8,29 +8,40 @@ interface SettingsStore {
 
   // UI settings
 
-  wideMode: boolean;
-  setWideMode: (wideMode: boolean) => void;
+  centerMode: 'narrow' | 'wide' | 'full';
+  setCenterMode: (centerMode: 'narrow' | 'wide' | 'full') => void;
 
   freeScroll: boolean;
   setFreeScroll: (freeScroll: boolean) => void;
 
+  renderMarkdown: boolean;
+  setRenderMarkdown: (renderMarkdown: boolean) => void;
+
+  showPurposeFinder: boolean;
+  setShowPurposeFinder: (showPurposeFinder: boolean) => void;
+
   showSystemMessages: boolean;
   setShowSystemMessages: (showSystemMessages: boolean) => void;
 
+  zenMode: 'clean' | 'cleaner';
+  setZenMode: (zenMode: 'clean' | 'cleaner') => void;
 
   // OpenAI API settings
 
   apiKey: string;
   setApiKey: (apiKey: string) => void;
 
-  modelApiHost: string;
-  setModelApiHost: (modelApiHost: string) => void;
+  apiHost: string;
+  setApiHost: (apiHost: string) => void;
+
+  apiOrganizationId: string;
+  setApiOrganizationId: (apiOrganizationId: string) => void;
 
   modelTemperature: number;
   setModelTemperature: (modelTemperature: number) => void;
 
-  modelMaxTokens: number;
-  setModelMaxTokens: (modelMaxTokens: number) => void;
+  modelMaxResponseTokens: number;
+  setModelMaxResponseTokens: (modelMaxResponseTokens: number) => void;
 
 }
 
@@ -38,14 +49,23 @@ export const useSettingsStore = create<SettingsStore>()(
   persist(
     (set) => ({
 
-      wideMode: false,
-      setWideMode: (wideMode: boolean) => set({ wideMode }),
+      centerMode: 'wide',
+      setCenterMode: (centerMode: 'narrow' | 'wide' | 'full') => set({ centerMode }),
 
       freeScroll: false,
       setFreeScroll: (freeScroll: boolean) => set({ freeScroll }),
 
+      renderMarkdown: false,
+      setRenderMarkdown: (renderMarkdown: boolean) => set({ renderMarkdown }),
+
+      showPurposeFinder: false,
+      setShowPurposeFinder: (showPurposeFinder: boolean) => set({ showPurposeFinder }),
+
       showSystemMessages: false,
       setShowSystemMessages: (showSystemMessages: boolean) => set({ showSystemMessages }),
+
+      zenMode: 'clean',
+      setZenMode: (zenMode: 'clean' | 'cleaner') => set({ zenMode }),
 
       apiKey: (function() {
         // this will be removed in April
@@ -54,14 +74,17 @@ export const useSettingsStore = create<SettingsStore>()(
       })(),
       setApiKey: (apiKey: string) => set({ apiKey }),
 
-      modelApiHost: '',
-      setModelApiHost: (modelApiHost: string) => set({ modelApiHost }),
+      apiHost: '',
+      setApiHost: (apiHost: string) => set({ apiHost }),
+
+      apiOrganizationId: '',
+      setApiOrganizationId: (apiOrganizationId: string) => set({ apiOrganizationId }),
 
       modelTemperature: 0.5,
       setModelTemperature: (modelTemperature: number) => set({ modelTemperature }),
 
-      modelMaxTokens: 2048,
-      setModelMaxTokens: (modelMaxTokens: number) => set({ modelMaxTokens }),
+      modelMaxResponseTokens: 2048,
+      setModelMaxResponseTokens: (modelMaxResponseTokens: number) => set({ modelMaxResponseTokens: modelMaxResponseTokens }),
 
     }),
     {
