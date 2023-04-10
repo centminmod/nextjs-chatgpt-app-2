@@ -5,6 +5,9 @@ const nextConfig = {
     // defaults to TRUE, unless API Keys are set at build time; this flag is used by the UI
     REQUIRE_USER_API_KEYS: !process.env.OPENAI_API_KEY,
   },
+  experimental: {
+    runtime: 'experimental-edge',
+  },
   webpack(config, { isServer, dev }) {
     // @mui/joy: anything material gets redirected to Joy
     config.resolve.alias['@mui/material'] = '@mui/joy';
