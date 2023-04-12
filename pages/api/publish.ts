@@ -24,8 +24,6 @@ export type ApiPublishResponse = {
   error: string
 };
 
-export const config = { runtime: 'edge' };
-
 /**
  * 'Proxy' that uploads a file to paste.gg.
  * Called by the UI to avoid CORS issues, as the browser cannot post directly to paste.gg.
