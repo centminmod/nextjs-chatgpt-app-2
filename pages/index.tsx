@@ -2,10 +2,12 @@ import * as React from 'react';
 
 import { Container, useTheme } from '@mui/joy';
 
-import { Chat } from '@/components/Chat';
-import { NoSSR } from '@/components/util/NoSSR';
-import { isValidOpenAIApiKey, SettingsModal } from '@/components/dialogs/SettingsModal';
-import { useSettingsStore } from '@/lib/store-settings';
+import { NoSSR } from '@/common/components/NoSSR';
+import { isValidOpenAIApiKey } from '@/modules/openai/openai.client';
+import { useSettingsStore } from '@/common/state/store-settings';
+
+import { Chat } from '../src/apps/chat/Chat';
+import { SettingsModal } from '../src/apps/settings/SettingsModal';
 
 
 export default function Home() {
@@ -20,7 +22,7 @@ export default function Home() {
 
   // show the Settings Dialog at startup if the API key is required but not set
   React.useEffect(() => {
-    if (!!process.env.REQUIRE_USER_API_KEYS && !isValidOpenAIApiKey(apiKey))
+    if (!process.env.HAS_SERVER_KEY_OPENAI && !isValidOpenAIApiKey(apiKey))
       setSettingsShown(true);
   }, [apiKey]);
 
