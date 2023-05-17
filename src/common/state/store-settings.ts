@@ -14,6 +14,9 @@ interface SettingsStore {
   centerMode: 'narrow' | 'wide' | 'full';
   setCenterMode: (centerMode: 'narrow' | 'wide' | 'full') => void;
 
+  enterToSend: boolean;
+  setEnterToSend: (enterToSend: boolean) => void;
+
   renderMarkdown: boolean;
   setRenderMarkdown: (renderMarkdown: boolean) => void;
 
@@ -28,14 +31,17 @@ interface SettingsStore {
 
   // OpenAI API settings
 
-  apiKey: string;
-  setApiKey: (apiKey: string) => void;
-
   apiHost: string;
   setApiHost: (apiHost: string) => void;
 
+  apiKey: string;
+  setApiKey: (apiKey: string) => void;
+
   apiOrganizationId: string;
   setApiOrganizationId: (apiOrganizationId: string) => void;
+
+  heliconeKey: string;
+  setHeliconeKey: (heliconeKey: string) => void;
 
   modelTemperature: number;
   setModelTemperature: (modelTemperature: number) => void;
@@ -94,6 +100,9 @@ export const useSettingsStore = create<SettingsStore>()(
       centerMode: 'wide',
       setCenterMode: (centerMode: 'narrow' | 'wide' | 'full') => set({ centerMode }),
 
+      enterToSend: false,
+      setEnterToSend: (enterToSend: boolean) => set({ enterToSend }),
+
       renderMarkdown: false,
       setRenderMarkdown: (renderMarkdown: boolean) => set({ renderMarkdown }),
 
@@ -108,18 +117,17 @@ export const useSettingsStore = create<SettingsStore>()(
 
       // OpenAI API settings
 
-      apiKey: (function() {
-        // this will be removed in April
-        if (typeof localStorage === 'undefined') return '';
-        return localStorage.getItem('app-settings-openai-api-key') || '';
-      })(),
-      setApiKey: (apiKey: string) => set({ apiKey }),
-
       apiHost: '',
       setApiHost: (apiHost: string) => set({ apiHost }),
 
+      apiKey: '',
+      setApiKey: (apiKey: string) => set({ apiKey }),
+
       apiOrganizationId: '',
       setApiOrganizationId: (apiOrganizationId: string) => set({ apiOrganizationId }),
+
+      heliconeKey: '',
+      setHeliconeKey: (heliconeKey: string) => set({ heliconeKey }),
 
       modelTemperature: 0.5,
       setModelTemperature: (modelTemperature: number) => set({ modelTemperature }),

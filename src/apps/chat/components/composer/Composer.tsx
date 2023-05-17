@@ -125,17 +125,16 @@ const SentMessagesMenu = (props: {
   onClear: () => void,
 }) =>
   <Menu
-    variant='plain' color='neutral' size='md' placement='top-end' sx={{ minWidth: 320, overflow: 'auto' }}
-    open anchorEl={props.anchorEl} onClose={props.onClose}>
+    variant='plain' color='neutral' size='md' placement='top-end' sx={{ minWidth: 320, maxWidth: '100dvw', overflow: 'hidden' }}
+    open={!!props.anchorEl} anchorEl={props.anchorEl} onClose={props.onClose}>
 
     <MenuItem color='neutral' selected>Reuse messages 💬</MenuItem>
 
     <ListDivider />
 
     {props.messages.map((item, index) =>
-      <MenuItem key={'composer-sent-' + index} onClick={() => props.onPaste(item.text)}>
-        {item.count > 1 && <Typography level='body2' color='neutral' sx={{ mr: 1 }}>({item.count})</Typography>}
-        {item.text?.length > 60 ? item.text.slice(0, 58) + '...' : item.text}
+      <MenuItem key={'composer-sent-' + index} onClick={() => props.onPaste(item.text)} sx={{ textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline', overflow: 'hidden' }}>
+        {item.count > 1 && <span style={{ marginRight: 1 }}>({item.count})</span>} {item.text?.length > 70 ? item.text.slice(0, 68) + '...' : item.text}
       </MenuItem>)}
 
     <ListDivider />
@@ -179,8 +178,7 @@ export function Composer(props: {
   const theme = useTheme();
   const { sendModeId, setSendModeId, sentMessages, appendSentMessage, clearSentMessages } = useComposerStore();
   const stopTyping = useChatStore(state => state.stopTyping);
-  const modelMaxResponseTokens = useSettingsStore(state => state.modelMaxResponseTokens);
-
+  const { enterToSend, modelMaxResponseTokens } = useSettingsStore(state => ({ enterToSend: state.enterToSend, modelMaxResponseTokens: state.modelMaxResponseTokens }), shallow);
 
   const { assistantTyping, chatModelId, tokenCount: conversationTokenCount } = useChatStore(state => {
     const conversation = state.conversations.find(conversation => conversation.id === props.conversationId);
@@ -197,8 +195,9 @@ export function Composer(props: {
   const directTokens = React.useMemo(() => {
     return (!composeText || !chatModelId) ? 0 : 4 + countModelTokens(composeText, chatModelId, 'composer text');
   }, [chatModelId, composeText]);
-  const indirectTokens = modelMaxResponseTokens + conversationTokenCount;
-  const remainingTokens = tokenLimit - directTokens - indirectTokens;
+  const historyTokens = conversationTokenCount;
+  const responseTokens = modelMaxResponseTokens;
+  const remainingTokens = tokenLimit - directTokens - historyTokens - responseTokens;
 
 
   const handleSendClicked = () => {
@@ -217,10 +216,13 @@ export function Composer(props: {
   const handleStopClicked = () => props.conversationId && stopTyping(props.conversationId);
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
-      if (!assistantTyping)
-        handleSendClicked();
-      e.preventDefault();
+    if (e.key === 'Enter') {
+      const shiftOrAlt = e.shiftKey || e.altKey;
+      if (enterToSend ? !shiftOrAlt : shiftOrAlt) {
+        if (!assistantTyping)
+          handleSendClicked();
+        e.preventDefault();
+      }
     }
   };
 
@@ -462,6 +464,7 @@ export function Composer(props: {
                 value={composeText} onChange={(e) => setComposeText(e.target.value)}
                 slotProps={{
                   textarea: {
+                    enterKeyHint: enterToSend ? 'send' : 'enter',
                     sx: {
                       ...(isSpeechEnabled ? { pr: { md: 5 } } : {}),
                       mb: 0.5,
@@ -474,13 +477,13 @@ export function Composer(props: {
                   lineHeight: 1.75,
                 }} />
 
-              {tokenLimit > 0 && (directTokens > 0 || indirectTokens > 0) && <TokenProgressbar direct={directTokens} indirect={indirectTokens} limit={tokenLimit} />}
+              {tokenLimit > 0 && (directTokens > 0 || (historyTokens + responseTokens) > 0) && <TokenProgressbar history={historyTokens} response={responseTokens} direct={directTokens} limit={tokenLimit} />}
 
             </Box>
 
             {isSpeechEnabled && <MicButton variant={micVariant} color={micColor} onClick={handleMicClicked} sx={{ ...hideOnMobile, position: 'absolute', top: 0, right: 0, margin: 1 }} />}
 
-            {!!tokenLimit && <TokenBadge directTokens={directTokens} indirectTokens={indirectTokens} tokenLimit={tokenLimit} absoluteBottomRight />}
+            {!!tokenLimit && <TokenBadge directTokens={directTokens} indirectTokens={historyTokens + responseTokens} tokenLimit={tokenLimit} absoluteBottomRight />}
 
             <Card
               color='primary' invertedColors variant='soft'
@@ -512,7 +515,7 @@ export function Composer(props: {
 
               {/* [mobile-only] Sent messages arrow */}
               {sentMessages.length > 0 && (
-                <IconButton variant='plain' color='neutral' onClick={showSentMessages} sx={{ ...hideOnDesktop, mr: { xs: 1, md: 2 } }}>
+                <IconButton disabled={!!sentMessagesAnchor} variant='plain' color='neutral' onClick={showSentMessages} sx={{ ...hideOnDesktop, mr: { xs: 1, md: 2 } }}>
                   <KeyboardArrowUpIcon />
                 </IconButton>
               )}
@@ -530,7 +533,7 @@ export function Composer(props: {
             {/* [desktop-only] row with Sent Messages button */}
             <Stack direction='row' spacing={1} sx={{ ...hideOnMobile, flexDirection: { xs: 'column', md: 'row' }, justifyContent: 'flex-end' }}>
               {sentMessages.length > 0 && (
-                <Button fullWidth variant='plain' color='neutral' startDecorator={<KeyboardArrowUpIcon />} onClick={showSentMessages}>
+                <Button disabled={!!sentMessagesAnchor} fullWidth variant='plain' color='neutral' startDecorator={<KeyboardArrowUpIcon />} onClick={showSentMessages}>
                   History
                 </Button>
               )}

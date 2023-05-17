@@ -84,7 +84,7 @@ export class Agent {
   async step(S: State, modelId: ChatModelId, log: (...data: any[]) => void = console.log) {
     log('→ reAct [...' + (S.messages.length + 1) + ']: ' + S.nextPrompt);
     const result = await this.chat(S, S.nextPrompt, modelId);
-    log(result);
+    log(`← ${result}`);
     const actions = result
       .split('\n')
       .map((a: string) => actionRe.exec(a))
@@ -95,11 +95,10 @@ export class Agent {
       if (!(action in knownActions)) {
         throw new Error(`Unknown action: ${action}: ${actionInput}`);
       }
-      log(`→ running ${action} "${actionInput}"`);
-      const observation = await knownActions[action](actionInput);
-      log(`Observation: ${observation}`);
-      S.nextPrompt = `Observation: ${observation}`;
-      S.lastObservation = observation;
+      log(`⚡ ${action} "${actionInput}"`);
+      S.lastObservation = await knownActions[action](actionInput);
+      S.nextPrompt = `Observation: ${S.lastObservation}`;
+      log(S.nextPrompt);
     } else {
       log('↙ done');
       // log(`Result: ${result}`);
@@ -124,7 +123,7 @@ async function search(query: string): Promise<string> {
     const data = await callApiSearchGoogle(query);
     return JSON.stringify(data);
   } catch (error) {
-    console.error('Error fetching search results:', (error as Error).message);
+    console.error('Error fetching search results:', error);
     return 'An error occurred while searching the internet. Missing API Key?';
   }
 }
