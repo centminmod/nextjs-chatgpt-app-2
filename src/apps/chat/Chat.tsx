@@ -3,14 +3,15 @@ import { shallow } from 'zustand/shallow';
 
 import { useTheme } from '@mui/joy';
 
+import type { PublishedSchema } from '~/modules/publish/publish.router';
 import { CmdRunProdia } from '~/modules/prodia/prodia.client';
 import { CmdRunReact } from '~/modules/aifn/react/react';
-import { PasteGG } from '~/modules/pastegg/pastegg.types';
-import { PublishedModal } from '~/modules/pastegg/PublishedModal';
-import { callPublish } from '~/modules/pastegg/pastegg.client';
+import { PublishedModal } from '~/modules/publish/PublishedModal';
+import { apiAsync } from '~/modules/trpc/trpc.client';
 import { imaginePromptFromText } from '~/modules/aifn/imagine/imaginePromptFromText';
 import { useModelsStore } from '~/modules/llms/store-llms';
 
+import { Brand } from '~/common/brand';
 import { ConfirmationModal } from '~/common/components/ConfirmationModal';
 import { Link } from '~/common/components/Link';
 import { conversationToMarkdown } from '~/common/util/conversationToMarkdown';
@@ -19,12 +20,12 @@ import { extractCommands } from '~/common/util/extractCommands';
 import { useApplicationBarStore } from '~/common/layouts/appbar/store-applicationbar';
 import { useUIPreferencesStore } from '~/common/state/store-ui';
 
-import { ActionItems } from './components/appbar/ActionItems';
+import { ChatContextItems } from './components/appbar/ChatContextItems';
 import { ChatMessageList } from './components/ChatMessageList';
 import { Composer } from './components/composer/Composer';
 import { ConversationItems } from './components/appbar/ConversationItems';
 import { Dropdowns } from './components/appbar/Dropdowns';
-import { Ephemerals } from './components/ephemerals/Ephemerals';
+import { Ephemerals } from './components/Ephemerals';
 import { ImportedModal, ImportedOutcome } from './components/appbar/ImportedModal';
 import { runAssistantUpdatingState } from './editors/chat-stream';
 import { runImageGenerationUpdatingState } from './editors/image-generate';
@@ -36,6 +37,18 @@ const SPECIAL_ID_ALL_CHATS = 'all-chats';
 export type SendModeId = 'immediate' | 'react';
 
 
+/// Returns a pretty link to the current page, for promo
+function linkToOrigin() {
+  let origin = (typeof window !== 'undefined') ? window.location.href : '';
+  if (!origin || origin.includes('//localhost'))
+    origin = Brand.URIs.OpenRepo;
+  origin = origin.replace('https://', '');
+  if (origin.endsWith('/'))
+    origin = origin.slice(0, -1);
+  return origin;
+}
+
+
 export function Chat() {
 
   // state
@@ -43,7 +56,7 @@ export function Chat() {
   const [clearConfirmationId, setClearConfirmationId] = React.useState<string | null>(null);
   const [deleteConfirmationId, setDeleteConfirmationId] = React.useState<string | null>(null);
   const [publishConversationId, setPublishConversationId] = React.useState<string | null>(null);
-  const [publishResponse, setPublishResponse] = React.useState<PasteGG.API.Publish.Response | null>(null);
+  const [publishResponse, setPublishResponse] = React.useState<PublishedSchema | null>(null);
   const [conversationImportOutcome, setConversationImportOutcome] = React.useState<ImportedOutcome | null>(null);
   const conversationFileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -154,8 +167,19 @@ export function Chat() {
       setPublishConversationId(null);
       if (conversation) {
         const markdownContent = conversationToMarkdown(conversation, !useUIPreferencesStore.getState().showSystemMessages);
-        const publishResponse = await callPublish('paste.gg', markdownContent);
-        setPublishResponse(publishResponse);
+        try {
+          const paste = await apiAsync.publish.publish.mutate({
+            to: 'paste.gg',
+            title: '🤖💬 Chat Conversation',
+            fileContent: markdownContent,
+            fileName: 'my-chat.md',
+            origin: linkToOrigin(),
+          });
+          setPublishResponse(paste);
+        } catch (error: any) {
+          alert(`Failed to publish conversation: ${error?.message ?? error?.toString() ?? 'unknown error'}`);
+          setPublishResponse(null);
+        }
       }
     }
   };
@@ -213,7 +237,7 @@ export function Chat() {
   );
 
   const actionItems = React.useMemo(() =>
-      <ActionItems
+      <ChatContextItems
         conversationId={activeConversationId} isConversationEmpty={isConversationEmpty}
         isMessageSelectionMode={isMessageSelectionMode} setIsMessageSelectionMode={setIsMessageSelectionMode}
         onClearConversation={handleClearConversation}
@@ -223,8 +247,8 @@ export function Chat() {
   );
 
   React.useEffect(() => {
-    useApplicationBarStore.getState().register(dropdowns, conversationsBadge, conversationItems, actionItems);
-    return () => useApplicationBarStore.getState().unregister();
+    useApplicationBarStore.getState().registerClientComponents(dropdowns, conversationsBadge, conversationItems, actionItems);
+    return () => useApplicationBarStore.getState().unregisterClientComponents();
   }, [dropdowns, conversationsBadge, conversationItems, actionItems]);
 
   return <>
