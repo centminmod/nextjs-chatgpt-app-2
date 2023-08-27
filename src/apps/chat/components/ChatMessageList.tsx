@@ -10,9 +10,8 @@ import { createDMessage, DMessage, useChatStore } from '~/common/state/store-cha
 import { useUIPreferencesStore } from '~/common/state/store-ui';
 
 import { ChatMessage } from './message/ChatMessage';
-import { ChatMessageSelectable, MessagesSelectionHeader } from './message/ChatMessageSelectable';
-import { PurposeSelector } from './purpose-selector/PurposeSelector';
-import { SendModeId } from '../Chat';
+import { CleanerMessage, MessagesSelectionHeader } from './message/CleanerMessage';
+import { PersonaSelector } from './persona-selector/PersonaSelector';
 
 
 /**
@@ -21,7 +20,7 @@ import { SendModeId } from '../Chat';
 export function ChatMessageList(props: {
   conversationId: string | null,
   isMessageSelectionMode: boolean, setIsMessageSelectionMode: (isMessageSelectionMode: boolean) => void,
-  onExecuteConversation: (sendModeId: SendModeId, conversationId: string, history: DMessage[]) => void,
+  onExecuteChatHistory: (conversationId: string, history: DMessage[]) => void,
   onImagineFromText: (conversationId: string, userText: string) => void,
   sx?: SxProps
 }) {
@@ -51,11 +50,11 @@ export function ChatMessageList(props: {
 
   const handleRestartFromMessage = (messageId: string, offset: number) => {
     const truncatedHistory = messages.slice(0, messages.findIndex(m => m.id === messageId) + offset + 1);
-    props.conversationId && props.onExecuteConversation('immediate', props.conversationId, truncatedHistory);
+    props.conversationId && props.onExecuteChatHistory(props.conversationId, truncatedHistory);
   };
 
   const handleRunExample = (text: string) =>
-    props.conversationId && props.onExecuteConversation('immediate', props.conversationId, [...messages, createDMessage('user', text)]);
+    props.conversationId && props.onExecuteChatHistory(props.conversationId, [...messages, createDMessage('user', text)]);
 
 
   // hide system messages if the user chooses so
@@ -66,7 +65,7 @@ export function ChatMessageList(props: {
   if (!filteredMessages.length)
     return props.conversationId ? (
       <Box sx={props.sx || {}}>
-        <PurposeSelector conversationId={props.conversationId} runExample={handleRunExample} />
+        <PersonaSelector conversationId={props.conversationId} runExample={handleRunExample} />
       </Box>
     ) : null;
 
@@ -98,15 +97,15 @@ export function ChatMessageList(props: {
   //   '&::-webkit-scrollbar': {
   //     md: {
   //       width: 8,
-  //       background: theme.vars.palette.neutral.plainHoverBg,
+  //       background: theme.palette.neutral.plainHoverBg,
   //     },
   //   },
   //   '&::-webkit-scrollbar-thumb': {
-  //     background: theme.vars.palette.neutral.solidBg,
+  //     background: theme.palette.neutral.solidBg,
   //     borderRadius: 6,
   //   },
   //   '&::-webkit-scrollbar-thumb:hover': {
-  //     background: theme.vars.palette.neutral.solidHoverBg,
+  //     background: theme.palette.neutral.solidHoverBg,
   //   },
   // };
 
@@ -122,7 +121,7 @@ export function ChatMessageList(props: {
       {filteredMessages.map((message, idx) =>
         props.isMessageSelectionMode ? (
 
-          <ChatMessageSelectable
+          <CleanerMessage
             key={'sel-' + message.id} message={message}
             isBottom={idx === 0} remainingTokens={(chatLLM ? chatLLM.contextTokens : 0) - historyTokenCount}
             selected={selectedMessages.has(message.id)} onToggleSelected={handleToggleSelected}
